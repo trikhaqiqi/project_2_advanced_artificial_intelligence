@@ -383,4 +383,122 @@ class RandomForestClassifier():
         sampled_target = self.__target.loc[sample_indexes].reset_index(drop = True)
 
         return sampled_features, sampled_target
-        
+
+class Ann():
+  def __init__(self, hidden_size=32, epochs=10000, learning_rate=0.1, seed=42, verbose=True):
+      self.hidden_size = hidden_size
+      self.epochs = epochs
+      self.learning_rate = learning_rate
+      self.seed = seed
+      self.verbose = verbose
+      self.parameters = None
+      self.mean = None
+      self.std = None
+      self.n_kelas = None
+      self.cost_history = []
+
+  def sigmoid(self, Z):
+    return 1 / (1 + np.exp(-Z))
+
+  def relu(self, Z):
+      return np.maximum(0, Z)
+
+  def relu_derivative(self, Z):
+      return (Z > 0).astype(float)
+
+  def standardisasi(self, X):
+      X = np.asarray(X, dtype=float)
+      return ((X - self.mean) / self.std).T     # (n, fitur) -> (fitur, n)
+
+  def one_hot(self, y):
+      Y = np.zeros((self.n_kelas, len(y)))
+      Y[y, np.arange(len(y))] = 1
+      return Y
+
+  def initialize_parameters(self, input_size, hidden_size, output_size):
+    np.random.seed(self.seed)
+    parameters = {
+        "W1": np.random.randn(hidden_size, input_size) * 0.01,
+        "b1": np.zeros((hidden_size, 1)),
+        "W2": np.random.randn(output_size, hidden_size) * 0.01,
+        "b2": np.zeros((output_size, 1))
+    }
+    return parameters
+
+  def forward_propagation(self, X, parameters):
+      W1, b1, W2, b2 = parameters["W1"], parameters["b1"], parameters["W2"], parameters["b2"]
+
+      Z1 = np.dot(W1, X) + b1
+      A1 = self.relu(Z1)
+      Z2 = np.dot(W2, A1) + b2
+      A2 = self.sigmoid(Z2)
+
+      cache = {"Z1": Z1, "A1": A1, "Z2": Z2, "A2": A2}
+      return A2, cache
+
+  def compute_cost(self, Y, A2):
+      m = Y.shape[1]
+      A2 = np.clip(A2, 1e-12, 1 - 1e-12)
+      cost = -np.sum(Y * np.log(A2) + (1 - Y) * np.log(1 - A2)) / m   # binary cross-entropy
+      return np.squeeze(cost)
+
+  def backward_propagation(self, X, Y, parameters, cache):
+      m = X.shape[1]
+      W2 = parameters["W2"]
+
+      dZ2 = cache["A2"] - Y
+      dW2 = np.dot(dZ2, cache["A1"].T) / m
+      db2 = np.sum(dZ2, axis=1, keepdims=True) / m
+
+      dZ1 = np.dot(W2.T, dZ2) * self.relu_derivative(cache["Z1"])
+      dW1 = np.dot(dZ1, X.T) / m
+      db1 = np.sum(dZ1, axis=1, keepdims=True) / m
+
+      grads = {"dW1": dW1, "db1": db1, "dW2": dW2, "db2": db2}
+      return grads
+
+  def update_parameters(self, parameters, grads):
+      for key in parameters.keys():
+          parameters[key] -= self.learning_rate * grads["d" + key]
+      return parameters
+
+  def fit(self, X, y):
+      X_arr = np.asarray(X, dtype=float)
+      y = np.asarray(y).astype(int)
+
+      # simpan mean & std data latih (dipakai lagi saat predict)
+      self.mean = X_arr.mean(axis=0)
+      self.std = X_arr.std(axis=0)
+      self.std[self.std == 0] = 1
+      self.n_kelas = int(y.max()) + 1
+
+      X_t = self.standardisasi(X_arr)
+      Y = self.one_hot(y)
+      self.parameters = self.initialize_parameters(X_t.shape[0], self.hidden_size, self.n_kelas)
+      self.cost_history = []
+
+      for i in range(self.epochs):
+          A2, cache = self.forward_propagation(X_t, self.parameters)
+          cost = self.compute_cost(Y, A2)
+          grads = self.backward_propagation(X_t, Y, self.parameters, cache)
+          self.parameters = self.update_parameters(self.parameters, grads)
+          self.cost_history.append(cost)
+
+          if self.verbose and i % 200 == 0:
+              print(f"Epoch {i}: Cost = {cost:.4f}")
+      return self
+
+  def predict_proba(self, X):
+      A2, cache = self.forward_propagation(self.standardisasi(X), self.parameters)
+      return A2.T
+
+  def predict(self, X):
+      return np.argmax(self.predict_proba(X), axis=1) 
+
+  def save_to_pickle(self, path):
+      with open(path, "wb") as f:
+          pickle.dump(self.__dict__, f)
+
+  def load_from_pickle(self, path):
+      with open(path, "rb") as f:
+          self.__dict__.update(pickle.load(f))
